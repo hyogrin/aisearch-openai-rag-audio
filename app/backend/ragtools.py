@@ -61,7 +61,7 @@ async def _search_tool(
     # Hybrid query using Azure AI Search with (optional) Semantic Ranker
     vector_queries = []
     if use_vector_query:
-        vector_queries.append(VectorizableTextQuery(text=args['query'], k_nearest_neighbors=50, fields=embedding_field))
+        vector_queries.append(VectorizableTextQuery(text=args['query'], k_nearest_neighbors=100, fields=embedding_field))
     search_results = await search_client.search(
         search_text=args["query"], 
         query_type="semantic" if semantic_configuration else "simple",
