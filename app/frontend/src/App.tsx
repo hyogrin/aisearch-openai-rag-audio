@@ -55,7 +55,10 @@ function App() {
             setTranscripts(prev => [...prev, newTranscriptItem]);
         },
         onReceivedResponseDone: message => {
-            const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
+            //content.text for voice agent || content.transcript for aoai realtime api
+            const transcript = message.response.output
+                .map(output => output.content?.map(content => content.text || content.transcript || "").join(" "))
+                .join(" ");
             if (!transcript) return;
 
             const newTranscriptItem = {
@@ -89,13 +92,13 @@ function App() {
     const { t } = useTranslation();
 
     return (
-        <div className="flex min-h-screen flex-col bg-gray-100 text-gray-900">
+        <div className="flex min-h-screen flex-col bg-blue-50 text-gray-900">
             <div className="p-4 sm:absolute sm:left-4 sm:top-4">
                 <img src={logo} alt="Azure logo" className="h-16 w-16" />
             </div>
             <main className="flex flex-grow flex-row">
                 <div className="flex w-2/3 flex-col items-center justify-center">
-                    <h1 className="mb-8 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-4xl font-bold text-transparent md:text-7xl">
+                    <h1 className="mb-8 bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-4xl font-bold text-transparent md:text-7xl">
                         {t("app.title")}
                     </h1>
                     <div className="mb-4 flex flex-col items-center justify-center">
@@ -118,21 +121,20 @@ function App() {
                         <StatusMessage isRecording={isRecording} />
                     </div>
                     <GroundingFiles files={groundingFiles} onSelected={setSelectedFile} />
+                    <footer className="py-4 text-center">
+                        <p>{t("app.footer")}</p>
+                    </footer>
                 </div>
 
                 <div className="w-1/3">
                     <Card className="p-6">
                         <h2 className="mb-4 text-center font-semibold">Transcript History</h2>
-                        <div className="h-[calc(100vh-13rem)] overflow-auto pr-4">
+                        <div className="h-[calc(100vh-6rem)] overflow-auto">
                             <TranscriptPanel transcripts={transcripts} />
                         </div>
                     </Card>
                 </div>
             </main>
-
-            <footer className="py-4 text-center">
-                <p>{t("app.footer")}</p>
-            </footer>
 
             <GroundingFileView groundingFile={selectedFile} onClosed={() => setSelectedFile(null)} />
         </div>

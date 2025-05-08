@@ -14,41 +14,54 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voicerag")
 
 async def create_app():
-    if not os.environ.get("RUNNING_IN_PRODUCTION"):
-        logger.info("Running in development mode, loading from .env file")
-        load_dotenv()
-
-    llm_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    load_dotenv(override=True)
+    
+    voice_model_key = os.environ.get("AZURE_OPENAI_API_KEY") if os.environ.get("VOICE_MODEL_TYPE") == "aoai_realtime" else os.environ.get("AZURE_VOICEAGENT_API_KEY")
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
-
+    custom_language = os.environ.get("CUSTOM_LANGUAGE")
+    
     credential = None
-    if not llm_key or not search_key:
+    if not voice_model_key or not search_key:
         if tenant_id := os.environ.get("AZURE_TENANT_ID"):
             logger.info("Using AzureDeveloperCliCredential with tenant_id %s", tenant_id)
             credential = AzureDeveloperCliCredential(tenant_id=tenant_id, process_timeout=60)
         else:
             logger.info("Using DefaultAzureCredential")
             credential = DefaultAzureCredential()
-    llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
+    
+    voice_model_credential = AzureKeyCredential(voice_model_key) if voice_model_key else credential
     search_credential = AzureKeyCredential(search_key) if search_key else credential
     
     app = web.Application()
 
     rtmt = RTMiddleTier(
-        credentials=llm_credential,
-        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        credentials=voice_model_credential,
+        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"] if os.environ.get("VOICE_MODEL_TYPE") == "aoai_realtime" else os.environ["AZURE_VOICEAGENT_ENDPOINT"],
         deployment=os.environ["AZURE_OPENAI_REALTIME_DEPLOYMENT"],
-        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
+        api_version=os.environ.get("AZURE_OPENAI_API_VERSION") if os.environ.get("VOICE_MODEL_TYPE") == "aoai_realtime" else os.environ.get("AZURE_VOICEAGENT_API_VERSION"),
+        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") if os.environ.get("VOICE_MODEL_TYPE") == "aoai_realtime" else os.environ.get("AZURE_VOICEAGENT_VOICE_CHOICE"),
+        voice_model_type=os.environ.get("VOICE_MODEL_TYPE") or "aoai_realtime",
         )
+    
     rtmt.system_message = """
-        You are a helpful assistant. Only answer questions based on information you searched in the knowledge base, accessible with the 'search' tool. 
-        The user is listening to answers with audio, so it's *super* important that answers are as short as possible, a single sentence if at all possible. 
-        Never read file names or source names or keys out loud. 
-        Always use the following step-by-step instructions to respond: 
-        1. Always use the 'search' tool to check the knowledge base before answering a question. 
-        2. Always use the 'report_grounding' tool to report the source of information from the knowledge base. 
-        3. Produce an answer that's as short as possible. If the answer isn't in the knowledge base, say you don't know.
+        You are a helpful assistant. Answer questions based only on information retrieved from the knowledge base using the 'search' tool.
+        The user is listening to your responses, so keep answers concise and limited to a single sentence whenever possible.
+        Do not read out file names, source names, or keys.
+
+        Follow these steps strictly:
+        Always use the 'search' tool to look up information before responding.
+        Use the 'report_grounding' tool to reference the source.
+        If the answer is not found, simply state: I don't know.
+        Respond in the same language as the question.
+
+        Special Instructions:
+        When mentioning the model "X10," or "X10" always pronounce it as "X one-zero", not "ten." For example, "The X one-zero device is optimized for high-speed processing." Keep this pronunciation consistent throughout the discussion.
+        Ensure this pronunciation is consistent throughout the conversation.
     """.strip()
+    
+    print("custom_language set to ", custom_language)
+    if custom_language:
+        rtmt.system_message = rtmt.system_message.replace("You are a helpful assistant.", "You are a helpful assistant that speaks in " + custom_language + ".")
 
     attach_rag_tools(rtmt,
         credentials=search_credential,
@@ -71,7 +84,6 @@ async def create_app():
     return app
 
 if __name__ == "__main__":
-    load_dotenv(override=True)
     host = "localhost"
     port = 8765
     web.run_app(create_app(), host=host, port=port)

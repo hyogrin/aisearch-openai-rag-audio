@@ -61,14 +61,36 @@ class RTMiddleTier:
     max_tokens: Optional[int] = None
     disable_audio: Optional[bool] = None
     voice_choice: Optional[str] = None
-    api_version: str = "2024-10-01-preview"
+    default_vad_config: Optional[dict[str, Any]] = None
+    # VAD (Voice Activity Detection) configuration
+    vad_config = "server_vad"
+    if vad_config == "server_vad":
+        default_vad_config = default_server_vad_config = {
+            "type": "server_vad",
+            "threshold": 0.5,
+            "prefix_padding_ms": 300,
+            "silence_duration_ms": 500,
+            "create_response": True,
+        }
+    else:
+        default_vad_config = default_sematic_vad_config = {
+            "type": "semantic_vad",
+            "eagerness": "auto", # low, medium, high, auto
+            "create_response": True
+        }
+    api_version: str
+    voice_model_type: str = "aoai_realtime" # or "voice_agent_realtime"
     _tools_pending = {}
     _token_provider = None
 
-    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: Optional[str] = None):
+    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, api_version: str, voice_choice: Optional[str] = None, voice_model_type: str = "realtime"):
         self.endpoint = endpoint
         self.deployment = deployment
+        self.api_version = api_version
+        print("RTMiddleTier: api_version: ", self.api_version)
         self.voice_choice = voice_choice
+        self.voice_model_type = voice_model_type
+        
         if voice_choice is not None:
             logger.info("Realtime voice choice set to %s", voice_choice)
         if isinstance(credentials, AzureKeyCredential):
@@ -88,7 +110,14 @@ class RTMiddleTier:
                     # tools, this will need updating
                     session["instructions"] = ""
                     session["tools"] = []
-                    session["voice"] = self.voice_choice
+                    if self.voice_model_type == "aoai_realtime":
+                        session["voice"] = self.voice_choice
+                    else:
+                        # https://github.com/yulin-li/voice-agent-sample/blob/master/docs/api-change.md
+                        session["voice"] = {
+                            "name": self.voice_choice,
+                            "type": "azure-standard"
+                        }
                     session["tool_choice"] = "none"
                     session["max_response_output_tokens"] = None
                     updated_message = json.dumps(message)
@@ -162,6 +191,7 @@ class RTMiddleTier:
             match message["type"]:
                 case "session.update":
                     session = message["session"]
+                    
                     if self.system_message is not None:
                         session["instructions"] = self.system_message
                     if self.temperature is not None:
@@ -170,8 +200,16 @@ class RTMiddleTier:
                         session["max_response_output_tokens"] = self.max_tokens
                     if self.disable_audio is not None:
                         session["disable_audio"] = self.disable_audio
-                    if self.voice_choice is not None:
+                    if self.voice_model_type == "aoai_realtime":
                         session["voice"] = self.voice_choice
+                    else:
+                        # https://github.com/yulin-li/voice-agent-sample/blob/master/docs/api-change.md
+                        session["voice"] = {
+                            "name": self.voice_choice,
+                            "type": "azure-standard"
+                        }
+                    if self.default_server_vad_config is not None:
+                        session["turn_detection"] = self.default_vad_config
                     session["tool_choice"] = "auto" if len(self.tools) > 0 else "none"
                     session["tools"] = [tool.schema for tool in self.tools.values()]
                     updated_message = json.dumps(message)
@@ -188,7 +226,11 @@ class RTMiddleTier:
                 headers = { "api-key": self.key }
             else:
                 headers = { "Authorization": f"Bearer {self._token_provider()}" } # NOTE: no async version of token provider, maybe refresh token on a timer?
-            async with session.ws_connect("/openai/realtime", headers=headers, params=params) as target_ws:
+            
+            # Voice Agent uses a different endpoint than the Azure OpenAI Realtime
+            voice_model_url = "/openai/realtime" if self.voice_model_type == "aoai_realtime" else "/voice-agent/realtime"    
+            
+            async with session.ws_connect(voice_model_url, headers=headers, params=params) as target_ws:
                 async def from_client_to_server():
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -211,6 +253,7 @@ class RTMiddleTier:
                                 await ws.send_str(new_msg)
                         else:
                             print("Error: unexpected message type:", msg.type)
+                            print("Error: unexpected message data:", msg.data)
 
                 try:
                     await asyncio.gather(from_client_to_server(), from_server_to_client())
